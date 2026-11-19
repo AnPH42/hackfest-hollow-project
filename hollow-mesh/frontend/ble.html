@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hollow Mesh — Bluetooth Courier</title>
+  <style>
+    :root { --bg:#0a0d13; --panel:#121722; --panel2:#1a2130; --line:#232b3b; --text:#e8ebf2;
+      --muted:#8a93a8; --accent:#ffb020; --ok:#4ade80; --bad:#f87171; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); padding: 18px 20px 40px;
+      font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    main { max-width: 760px; margin: 0 auto; }
+    header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+    h1 { font-size: 19px; margin: 0; } h1 span { color: var(--muted); font-weight: 400; }
+    .muted { color: var(--muted); font-size: 12.5px; }
+    .chip { font-size: 12px; padding: 2px 10px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); color: var(--muted); }
+    .chip.ok b { color: var(--ok); } .chip.bad b { color: var(--bad); } .chip b { color: var(--text); }
+    h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 22px 0 8px; font-weight: 600; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    button { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line);
+      border-radius: 10px; padding: 10px 14px; cursor: pointer; }
+    button:hover { border-color: #3a4560; }
+    button.primary { background: var(--accent); color: #1a1100; border-color: var(--accent); font-weight: 600; }
+    .board { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; margin-bottom: 8px; }
+    .bhead { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .mock { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); font-size: 13px; }
+    .mock button { padding: 5px 10px; font-size: 13px; }
+    .notif { background: var(--panel2); border-left: 4px solid var(--muted); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; font-size: 14px; }
+    .notif b { display: block; margin-bottom: 2px; }
+    .notif small { display: block; color: var(--muted); margin-top: 4px; font-size: 11.5px; }
+    .empty { color: var(--muted); text-align: center; padding: 20px 10px; border: 1px dashed var(--line); border-radius: 10px; font-size: 13.5px; }
+    .logline { font-size: 12.5px; padding: 2px 0; font-variant-numeric: tabular-nums; }
+    .logline span { color: var(--muted); margin-right: 6px; }
+    .flash { animation: flash .9s ease-out; }
+    @keyframes flash { from { background: #3a2f12; } to { background: var(--panel2); } }
+    ol { color: var(--muted); font-size: 13.5px; padding-left: 20px; margin: 6px 0 0; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Hollow Mesh <span>· Bluetooth courier</span></h1>
+    <div class="row"><span class="chip" id="me"></span><span class="chip" id="carry">Carrying <b>0</b></span></div>
+  </header>
+
+  <div class="row">
+    <button class="primary" id="pairBtn">Pair a board</button>
+    <button id="practiceBtn">Practice with simulated boards</button>
+    <button id="switchBtn" style="display:none">Become a different laptop</button>
+  </div>
+  <ol>
+    <li>Chrome or Edge, opened from <b>http://localhost</b> (not a network address).</li>
+    <li>Stand near a board, press “Pair a board”, choose its name (starts with “Hollow-”). Do this once for the sensor board and once for the mailbox board.</li>
+    <li>After that this page reconnects by itself whenever you walk back into range. Don’t reload it.</li>
+  </ol>
+
+  <h2>Boards</h2>
+  <div id="boards"></div>
+
+  <h2>Alerts this laptop has received</h2>
+  <div id="notifs"></div>
+
+  <h2>Activity</h2>
+  <div id="log"></div>
+</main>
+<script type="module" src="./ble.js"></script>
+</body>
+</html>

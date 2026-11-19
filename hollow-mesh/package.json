@@ -1,0 +1,11 @@
+{
+  "name": "hollow-mesh",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Delay-tolerant mesh routing core for the Hollow",
+  "scripts": {
+    "test": "node --test",
+    "relay": "node backend/server.js",
+    "fake": "node backend/fake-esp32.js | node backend/bridge.js"
+  }
+}

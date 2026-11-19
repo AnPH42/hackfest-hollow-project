@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>Hollow Mesh — Phone</title>
+  <style>
+    :root { --bg:#0a0d13; --panel:#121722; --panel2:#1a2130; --line:#232b3b; --text:#e8ebf2;
+      --muted:#8a93a8; --accent:#ffb020; --ok:#4ade80; --bad:#f87171; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body { margin: 0; background: var(--bg); color: var(--text); padding: 12px 14px 40px;
+      font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+    h1 { font-size: 17px; margin: 0; }
+    .id { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .status { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .chip { font-size: 12px; padding: 3px 10px; border-radius: 999px; background: var(--panel);
+      border: 1px solid var(--line); color: var(--muted); }
+    .chip b { color: var(--text); }
+    .chip.ok b { color: var(--ok); } .chip.bad b { color: var(--bad); }
+    h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);
+      margin: 18px 0 8px; font-weight: 600; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    button { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line);
+      border-radius: 12px; padding: 14px 10px; text-align: center; min-height: 52px; }
+    button:active { transform: scale(.98); }
+    button.here { border-color: var(--accent); background: #2a2110; font-weight: 700; }
+    button:disabled { opacity: .35; }
+    .hint { color: var(--muted); font-size: 12.5px; margin: 6px 0 0; }
+    .notif { background: var(--panel2); border-left: 4px solid var(--muted); border-radius: 10px;
+      padding: 10px 12px; margin-bottom: 8px; font-size: 14px; }
+    .notif b { display: block; margin-bottom: 2px; }
+    .notif small { display: block; color: var(--muted); margin-top: 4px; font-size: 11.5px; }
+    .empty { color: var(--muted); text-align: center; padding: 22px 10px; border: 1px dashed var(--line);
+      border-radius: 10px; font-size: 13.5px; }
+    .flash { animation: flash .9s ease-out; }
+    @keyframes flash { from { background: #3a2f12; } to { background: var(--panel2); } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Hollow Mesh</h1>
+    <span class="id" id="myId"></span>
+  </header>
+
+  <div class="status">
+    <span class="chip ok" id="chipConn">Level</span>
+    <span class="chip" id="chipPeers">In range <b>0</b></span>
+    <span class="chip" id="chipCarry">Carrying <b>0</b></span>
+    <span class="chip" id="chipDirect">Direct links <b>0</b></span>
+    <span class="chip bad" id="chipServer">Server <b>…</b></span>
+  </div>
+
+  <h2>Where you are</h2>
+  <div class="grid" id="levels"></div>
+  <p class="hint">You can only walk between levels through a shaft. Level 12 is reachable only from Level 9.</p>
+
+  <h2>Pretend a sensor fires near you</h2>
+  <div class="grid" id="alerts"></div>
+  <button id="checkin" style="width:100%;margin-top:8px">💚 Send "I'm OK" check-in</button>
+
+  <h2>Your messages</h2>
+  <div id="notifs"><div class="empty">Nothing yet. Alerts from phones on your level (or carried to you) appear here.</div></div>
+
+  <script type="module" src="./phone.js"></script>
+</body>
+</html>
