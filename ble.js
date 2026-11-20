@@ -22,10 +22,11 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const params = new URLSearchParams(location.search);
 const rand = () => Math.random().toString(36).slice(2, 6).toUpperCase();
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let nodeId = params.get('id') || `COURIER-${rand()}`;
 let node = makeNode();
-const boards = [];      // { link, name, role, connected, connecting, pushing, communityBusy, known:Set, communityKnown:Set, packets:Array, communityPackets:Array, mock }
+const boards = [];      // { link, name, role, connected, connecting, gattQueue, known:Set, communityKnown:Set, packets:Array, communityPackets:Array, mock }
 const notifs = [];      // { t, msg }
 const events = [];      // { t, text, kind }
 let droppedCount = 0;   // total items dropped into a mailbox this session
@@ -57,6 +58,14 @@ function inferRole(link) {
 function zoneForLevel(levelId) {
   const idx = LEVELS.findIndex((lv) => lv.id === levelId);
   return idx >= 0 ? idx : 0;
+}
+
+// Serialize all GATT operations per board so Chrome never throws
+// "GATT operation already in progress."
+function withGattLock(board, fn) {
+  const next = board.gattQueue.then(fn, fn);
+  board.gattQueue = next.catch(() => {});
+  return next;
 }
 
 // ----------------------------------------- optional spectator board telemetry
@@ -195,26 +204,28 @@ function packetFromMessage(m) {
   };
 }
 
-async function pushTo(board) {
-  if (board.pushing || !board.connected) return;
-  board.pushing = true;
-  try {
-    for (const m of [...node.store.values()]) {
-      if (board.role === 'sensor' || board.name === 'Hollow-Sensor') continue;
-      const pk = packetFromMessage(m);
-      if (!pk || m.ttl <= 0) continue;
-      if (board.known.has(packetKey(pk))) continue;
-      const outPkt = { ...pk, ttl: pk.ttl - 1, hops: pk.hops + 1 };
-      await board.link.write(encodePacket(outPkt));
-      board.known.add(packetKey(pk));
-      upsertBoardPacket(board, outPkt);
-      droppedCount++;
-      moveBoardZone(0);
-      reportBoardHop(nodeId, board.name, 0, { ...m, hops: outPkt.hops });
-      log(`Transferred "${m.payload.title}" to ${board.name} (hop ${outPkt.hops})`, 'dropoff');
-    }
-  } catch { /* connection dropped mid-write; will retry on reconnect */ }
-  finally { board.pushing = false; render(); }
+function pushTo(board) {
+  if (!board.connected) return Promise.resolve();
+  return withGattLock(board, async () => {
+    if (!board.connected) return;
+    try {
+      for (const m of [...node.store.values()]) {
+        if (board.role === 'sensor' || board.name === 'Hollow-Sensor') continue;
+        const pk = packetFromMessage(m);
+        if (!pk || m.ttl <= 0) continue;
+        if (board.known.has(packetKey(pk))) continue;
+        const outPkt = { ...pk, ttl: pk.ttl - 1, hops: pk.hops + 1 };
+        await board.link.write(encodePacket(outPkt));
+        board.known.add(packetKey(pk));
+        upsertBoardPacket(board, outPkt);
+        droppedCount++;
+        moveBoardZone(0);
+        reportBoardHop(nodeId, board.name, 0, { ...m, hops: outPkt.hops });
+        log(`Transferred "${m.payload.title}" to ${board.name} (hop ${outPkt.hops})`, 'dropoff');
+      }
+    } catch { /* connection dropped mid-write; will retry on reconnect */ }
+    finally { render(); }
+  });
 }
 
 const syncAll = () => boards.forEach((b) => pushTo(b));
@@ -232,55 +243,67 @@ function communityWireMessage(m) {
   };
 }
 
-async function receiveCommunityMessages(board) {
-  if (!board.connected || board.role !== 'mailbox' || board.communityBusy) return;
-  if (typeof board.link.readCommunity !== 'function') return;
-  board.communityBusy = true;
-  try {
-    const messages = await board.link.readCommunity();
-    let fresh = 0;
-    for (const msg of messages) {
-      if (!msg || !COMMUNITY_TYPES.has(msg.type) || !msg.id) continue;
-      upsertCommunityPacket(board, msg);
-      if (node.receive(msg)) {
-        fresh++;
-        reportBoardHop(board.name, nodeId, zoneForLevel(msg.level), msg);
+function receiveCommunityMessages(board) {
+  if (!board.connected || board.role !== 'mailbox') return Promise.resolve();
+  if (typeof board.link.readCommunity !== 'function') return Promise.resolve();
+  return withGattLock(board, async () => {
+    if (!board.connected) return;
+    let lastErr = null;
+    // Retry up to 2 times with jitter in case another laptop polled the shared
+    // COMMUNITY_FEED_UUID characteristic at the exact same moment.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const messages = await board.link.readCommunity();
+        let fresh = 0;
+        for (const msg of messages) {
+          if (!msg || !COMMUNITY_TYPES.has(msg.type) || !msg.id) continue;
+          upsertCommunityPacket(board, msg);
+          if (node.receive(msg)) {
+            fresh++;
+            reportBoardHop(board.name, nodeId, zoneForLevel(msg.level), msg);
+          }
+          board.communityKnown.add(msg.id);
+        }
+        if (fresh) {
+          log(`Picked up ${fresh} community message(s) from ${board.name}`, 'pickup');
+          render();
+        }
+        return;
+      } catch (error) {
+        lastErr = error;
+        const msg = String(error?.message || '');
+        const isCollision = msg.includes('Invalid community') || msg.includes('changed during read');
+        if (!isCollision || attempt === 2) break;
+        await wait(250 + Math.random() * 450);
       }
-      board.communityKnown.add(msg.id);
     }
-    if (fresh) {
-      log(`Picked up ${fresh} community message(s) from ${board.name}`, 'pickup');
-      render();
-    }
-  } catch (error) {
-    log(`Community retrieval failed: ${error.message}`);
-  } finally {
-    board.communityBusy = false;
-  }
+    if (lastErr && board.connected) log(`Community retrieval failed: ${lastErr.message}`);
+  });
 }
 
-async function pushCommunity(board) {
-  if (!board.connected || board.role !== 'mailbox' || board.communityBusy) return;
-  if (typeof board.link.writeCommunity !== 'function') return;
-  board.communityBusy = true;
-  try {
-    for (const m of [...node.store.values()]) {
-      if (!COMMUNITY_TYPES.has(m.type) || m.ttl <= 0) continue;
-      if (board.communityKnown.has(m.id)) continue;
-      const outbound = communityWireMessage({ ...m, ttl: m.ttl - 1, hops: m.hops + 1 });
-      await board.link.writeCommunity(outbound);
-      board.communityKnown.add(m.id);
-      upsertCommunityPacket(board, outbound);
-      droppedCount++;
-      reportBoardHop(nodeId, board.name, zoneForLevel(m.level), outbound);
-      log(`Transferred ${m.type} to ${board.name} (hop ${outbound.hops})`, 'dropoff');
+function pushCommunity(board) {
+  if (!board.connected || board.role !== 'mailbox') return Promise.resolve();
+  if (typeof board.link.writeCommunity !== 'function') return Promise.resolve();
+  return withGattLock(board, async () => {
+    if (!board.connected) return;
+    try {
+      for (const m of [...node.store.values()]) {
+        if (!COMMUNITY_TYPES.has(m.type) || m.ttl <= 0) continue;
+        if (board.communityKnown.has(m.id)) continue;
+        const outbound = communityWireMessage({ ...m, ttl: m.ttl - 1, hops: m.hops + 1 });
+        await board.link.writeCommunity(outbound);
+        board.communityKnown.add(m.id);
+        upsertCommunityPacket(board, outbound);
+        droppedCount++;
+        reportBoardHop(nodeId, board.name, zoneForLevel(m.level), outbound);
+        log(`Transferred ${m.type} to ${board.name} (hop ${outbound.hops})`, 'dropoff');
+      }
+    } catch (error) {
+      log(`Community send failed: ${error.message}`);
+    } finally {
+      render();
     }
-  } catch (error) {
-    log(`Community send failed: ${error.message}`);
-  } finally {
-    board.communityBusy = false;
-    render();
-  }
+  });
 }
 
 function sendCommunityMessage() {
@@ -302,6 +325,7 @@ async function connectBoard(b) {
     b.communityKnown = new Set();
     b.packets = [];
     b.communityPackets = [];
+    b.gattQueue = Promise.resolve();
     if (b.role === 'sensor') moveBoardZone(3);
     else moveBoardZone(0);
     b.link.onDisconnect = () => {
@@ -309,13 +333,15 @@ async function connectBoard(b) {
       log(`${b.name}: out of range`, 'info');
     };
     log(`Connected to ${b.name} (in range)`, 'info');
-    for (const bytes of await b.link.readAll()) {
-      const p = decodePacket(bytes);
-      if (p) ingest(p, b);
-    }
-    await b.link.subscribe((bytes) => {
-      const p = decodePacket(bytes);
-      if (p && ingest(p, b)) syncAll();
+    await withGattLock(b, async () => {
+      for (const bytes of await b.link.readAll()) {
+        const p = decodePacket(bytes);
+        if (p) ingest(p, b);
+      }
+      await b.link.subscribe((bytes) => {
+        const p = decodePacket(bytes);
+        if (p && ingest(p, b)) syncAll();
+      });
     });
     await receiveCommunityMessages(b);
     await pushTo(b);
@@ -331,10 +357,17 @@ async function connectBoard(b) {
 }
 
 setInterval(() => boards.forEach((b) => { if (!b.connected && !b.connecting) connectBoard(b); }), 1500);
-// Poll connected mailboxes for new community messages from other couriers.
-setInterval(() => boards.forEach((b) => {
-  if (b.connected && b.role === 'mailbox' && !b.communityBusy) void receiveCommunityMessages(b);
-}), 3000);
+
+// Poll connected mailboxes with jitter so two connected laptops don't poll in lockstep.
+function scheduleCommunityPoll() {
+  setTimeout(() => {
+    boards.forEach((b) => {
+      if (b.connected && b.role === 'mailbox') void receiveCommunityMessages(b);
+    });
+    scheduleCommunityPoll();
+  }, 4000 + Math.random() * 2500);
+}
+scheduleCommunityPoll();
 
 function addBoard(link, mock = false) {
   boards.push({
@@ -343,8 +376,7 @@ function addBoard(link, mock = false) {
     role: inferRole(link),
     connected: false,
     connecting: false,
-    pushing: false,
-    communityBusy: false,
+    gattQueue: Promise.resolve(),
     communityKnown: new Set(),
     known: new Set(),
     packets: [],
