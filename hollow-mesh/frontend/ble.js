@@ -3,15 +3,13 @@
 // This device is a "courier". It pairs with Hollow boards (ESP32s acting as
 // Bluetooth devices) once, then reconnects on its own whenever it walks back
 // into range of one. On each connection it:
-//   1. reads the alerts the board holds   -> adds them to its own MeshNode
-//   2. drops off the alerts it is carrying -> into the mailbox board's inbox
-// So an alert travels: sensor ESP32 -> this device -> mailbox ESP32 -> another device,
+//   1. reads the alerts & community messages the board holds -> adds to MeshNode
+//   2. drops off the alerts & community messages it carries   -> into the mailbox
+// So messages travel: sensor/courier -> this device -> mailbox ESP32 -> another device,
 // with no Wi-Fi and no server. Routing uses the real MeshNode from mesh.js.
 //
 // When server.js is reachable, ble.js sends optional, fail-silent spectator
-// telemetry (/events + /telemetry) so board.html lights up with BLE hops in
-// real time. If Wi-Fi drops, hops are queued and replayed on reconnect without
-// ever blocking offline Bluetooth transfers.
+// telemetry (/events + /telemetry) so board.html lights up with hops in real time.
 
 import { MeshNode } from '../shared/mesh.js';
 import { SENSOR_DEFS, LEVELS } from '../shared/sim.js';
@@ -27,10 +25,10 @@ const rand = () => Math.random().toString(36).slice(2, 6).toUpperCase();
 
 let nodeId = params.get('id') || `COURIER-${rand()}`;
 let node = makeNode();
-const boards = [];      // { link, name, role, connected, connecting, pushing, known:Set, packets:Array, mock }
+const boards = [];      // { link, name, role, connected, connecting, pushing, communityPushing, known:Set, communityKnown:Set, packets:Array, communityPackets:Array, mock }
 const notifs = [];      // { t, msg }
 const events = [];      // { t, text, kind }
-let droppedCount = 0;   // total alerts dropped into a mailbox this session
+let droppedCount = 0;   // total items dropped into a mailbox this session
 
 let boardEs = null;
 let telemetryOnline = false;
@@ -153,6 +151,15 @@ function upsertBoardPacket(board, p) {
   }
 }
 
+function upsertCommunityPacket(board, msg) {
+  const idx = board.communityPackets.findIndex((x) => x.id === msg.id);
+  if (idx >= 0) board.communityPackets[idx] = msg;
+  else {
+    board.communityPackets.push(msg);
+    while (board.communityPackets.length > 4) board.communityPackets.shift();
+  }
+}
+
 /** A packet read from a board becomes a mesh message. Reading is one hop. */
 function ingest(p, board) {
   const kindName = KIND_NAME[p.kind];
@@ -217,12 +224,11 @@ const syncAll = () => boards.forEach((b) => pushTo(b));
 const COMMUNITY_TYPES = new Set(['CHECKIN', 'REPORT', 'BULLETIN']);
 
 function communityWireMessage(m) {
-  // Send the fields the MeshNode needs; omit null/default fields to fit 512 bytes.
   return {
     id: m.id, type: m.type, sender: m.sender,
     to: m.to ?? null, level: m.level,
     payload: m.payload, timestamp: m.timestamp,
-    expiresAt: m.expiresAt, ttl: m.ttl, hops: m.hops, sig: null
+    expiresAt: m.expiresAt, ttl: m.ttl, hops: m.hops, sig: null,
   };
 }
 
@@ -233,6 +239,7 @@ async function receiveCommunityMessages(board) {
     let fresh = 0;
     for (const msg of messages) {
       if (!msg || !COMMUNITY_TYPES.has(msg.type) || !msg.id) continue;
+      upsertCommunityPacket(board, msg);
       if (node.receive(msg)) {
         fresh++;
         reportBoardHop(board.name, nodeId, zoneForLevel(msg.level), msg);
@@ -240,6 +247,7 @@ async function receiveCommunityMessages(board) {
       board.communityKnown.add(msg.id);
     }
     if (fresh) log(`Picked up ${fresh} community message(s) from ${board.name}`, 'pickup');
+    render();
   } catch (error) {
     log(`Community retrieval failed: ${error.message}`);
   }
@@ -256,22 +264,25 @@ async function pushCommunity(board) {
       const outbound = communityWireMessage({ ...m, ttl: m.ttl - 1, hops: m.hops + 1 });
       await board.link.writeCommunity(outbound);
       board.communityKnown.add(m.id);
-      log(`Sent ${m.type} to ${board.name}`, 'dropoff');
+      upsertCommunityPacket(board, outbound);
+      droppedCount++;
+      reportBoardHop(nodeId, board.name, zoneForLevel(m.level), outbound);
+      log(`Transferred ${m.type} to ${board.name} (hop ${outbound.hops})`, 'dropoff');
     }
   } catch (error) {
     log(`Community send failed: ${error.message}`);
   } finally {
     board.communityPushing = false;
+    render();
   }
 }
 
-function sendCommunityMessage(msg) {
-  // The message is already in node.store. Connected mailboxes get it now;
-  // disconnected mailboxes get it on their next successful connection.
+function sendCommunityMessage() {
   for (const board of boards) {
     if (board.connected && board.role === 'mailbox') void pushCommunity(board);
   }
 }
+
 // ------------------------------------------------------ connection manager
 
 async function connectBoard(b) {
@@ -284,6 +295,7 @@ async function connectBoard(b) {
     b.known = new Set();
     b.communityKnown = new Set();
     b.packets = [];
+    b.communityPackets = [];
     if (b.role === 'sensor') moveBoardZone(3);
     else moveBoardZone(0);
     b.link.onDisconnect = () => {
@@ -326,6 +338,7 @@ function addBoard(link, mock = false) {
     communityKnown: new Set(),
     known: new Set(),
     packets: [],
+    communityPackets: [],
     mock,
   });
   render();
@@ -335,7 +348,7 @@ function addBoard(link, mock = false) {
 
 async function pair() {
   if (!window.isSecureContext || !navigator.bluetooth) {
-    log('Web Bluetooth unavailable here. Open http://localhost:3000/ble.html in Chrome or Edge.', 'info');
+    log(`Web Bluetooth unavailable on ${location.origin}. Enable the Chrome flag or open localhost.`, 'info');
     return;
   }
   try {
@@ -366,7 +379,7 @@ function sendCheckin() {
   moveBoardZone(z);
   reportBoardHop(name, nodeId, z, msg);
   log(`Check-in sent: ${name} is OK (Level ${level})`, 'dropoff');
-  sendCommunityMessage(msg);
+  sendCommunityMessage();
 }
 
 function sendReport() {
@@ -386,7 +399,7 @@ function sendReport() {
   moveBoardZone(z);
   reportBoardHop(nodeId, `Level ${level}`, z, msg);
   log(`Symptom/supply report logged: ${title}`, 'pickup');
-  sendCommunityMessage(msg);
+  sendCommunityMessage();
 }
 
 function sendBulletin() {
@@ -406,7 +419,7 @@ function sendBulletin() {
   moveBoardZone(z);
   reportBoardHop(nodeId, `Level ${level}`, z, msg);
   log(`Resource bulletin posted: ${title}`, 'dropoff');
-  sendCommunityMessage(msg);
+  sendCommunityMessage();
 }
 
 // ------------------------------------------------------------ practice & reset
@@ -428,6 +441,7 @@ function resetView() {
     b.known = new Set();
     b.communityKnown = new Set();
     b.packets = [];
+    b.communityPackets = [];
   }
   log('View reset (paired boards kept). Ready for next demo run.');
 }
@@ -443,6 +457,7 @@ function switchLaptop() {
     b.known = new Set();
     b.communityKnown = new Set();
     b.packets = [];
+    b.communityPackets = [];
     b.link.disconnect();
     b.connected = false;
   }
@@ -454,9 +469,12 @@ function switchLaptop() {
 
 function renderCompat() {
   const el = $('compatBanner');
-  if (!window.isSecureContext || !navigator.bluetooth) {
+  if (!window.isSecureContext) {
     el.style.display = 'block';
-    el.innerHTML = '<b>Web Bluetooth is disabled in this browser or URL.</b> Use <b>Chrome or Edge</b> (desktop or Android) at <b>http://localhost:3000/ble.html</b> for real ESP32s—or use <b>Practice with simulated boards</b> below.';
+    el.innerHTML = `<b>Web Bluetooth requires a secure origin (currently <code>${esc(location.origin)}</code>).</b> On this device, open <code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>, enable it, add <code>${esc(location.origin)}</code> (including the port), and relaunch Chrome—or open from <b>http://localhost:3000/ble.html</b>.`;
+  } else if (!navigator.bluetooth) {
+    el.style.display = 'block';
+    el.innerHTML = '<b>Web Bluetooth is not supported in this browser.</b> Use <b>Chrome or Edge</b> on desktop or Android (iOS browsers do not support Web Bluetooth), or use <b>Practice with simulated boards</b> below.';
   } else {
     el.style.display = 'none';
   }
@@ -466,7 +484,9 @@ function renderPipeline(carrying) {
   const sensor = boards.find((b) => b.role === 'sensor');
   const mailbox = boards.find((b) => b.role === 'mailbox');
   const sensorHasAlert = (sensor?.packets.length ?? 0) > 0 || (sensor?.mock && sensor.link.store.length > 0);
-  const mailboxHasAlert = (mailbox?.packets.length ?? 0) > 0 || (mailbox?.mock && mailbox.link.store.length > 0);
+  const mailboxHasMsg = (mailbox?.packets.length ?? 0) > 0
+    || (mailbox?.communityPackets.length ?? 0) > 0
+    || (mailbox?.mock && (mailbox.link.store.length > 0 || (mailbox.link.communityStore?.length ?? 0) > 0));
   const relayedFromMailbox = notifs.some((n) => n.msg.hops >= 3);
 
   const stages = [
@@ -485,13 +505,13 @@ function renderPipeline(carrying) {
     {
       num: 'Step 3 · Drop off',
       title: 'Mailbox ESP32',
-      sub: !mailbox ? 'Not paired yet' : mailbox.connected ? (mailboxHasAlert ? 'In range · stored!' : 'In range · waiting') : (droppedCount > 0 ? `Delivered (${droppedCount})` : 'Out of range'),
+      sub: !mailbox ? 'Not paired yet' : mailbox.connected ? (mailboxHasMsg ? 'In range · stored!' : 'In range · waiting') : (droppedCount > 0 ? `Delivered (${droppedCount})` : 'Out of range'),
       cls: (mailbox?.connected || droppedCount > 0) ? 'active' : '',
     },
     {
       num: 'Step 4 · Relay',
       title: 'Other Devices',
-      sub: relayedFromMailbox ? 'Picked up from mailbox!' : mailboxHasAlert ? 'Ready for 2nd device' : 'Awaiting drop-off',
+      sub: relayedFromMailbox ? 'Picked up from mailbox!' : mailboxHasMsg ? 'Ready for 2nd device' : 'Awaiting drop-off',
       cls: relayedFromMailbox ? 'active' : '',
     },
   ];
@@ -506,18 +526,35 @@ function renderPipeline(carrying) {
 
 function renderPacketPills(b) {
   const pkts = b.mock ? b.link.store.map(decodePacket).filter(Boolean) : b.packets;
-  if (!pkts.length) {
-    return `<div class="pkt-strip"><span class="chip">Holding <b>0</b> alerts</span></div>`;
+  const community = b.mock ? (b.link.communityStore ?? []) : b.communityPackets;
+
+  if (!pkts.length && !community.length) {
+    return `<div class="pkt-strip"><span class="chip">Holding <b>0</b> messages</span></div>`;
   }
-  const pills = pkts.map((p) => {
+
+  const hazardPills = pkts.map((p) => {
     const kindName = KIND_NAME[p.kind] || `KIND ${p.kind}`;
     const def = SENSOR_DEFS[kindName];
     const color = def?.color ?? '#ffb020';
     const val = (p.valueX10 / 10).toFixed(1);
     const unit = def?.unit ?? '';
     return `<span class="pkt-pill" style="border-color:${color}"><b style="color:${color}">${esc(kindName)}</b> · ${val} ${esc(unit)} · L${p.level} · hop ${p.hops}</span>`;
-  }).join('');
-  return `<div class="pkt-strip">${pills}</div>`;
+  });
+
+  const communityPills = community.map((m) => {
+    if (m.type === 'CHECKIN') {
+      const who = m.payload?.name || 'Check-in';
+      return `<span class="pkt-pill" style="border-color:#86efac"><b style="color:#86efac">💚 ${esc(who)} OK</b> · L${m.level} · hop ${m.hops}</span>`;
+    }
+    if (m.type === 'REPORT') {
+      const cat = m.payload?.category || 'Report';
+      return `<span class="pkt-pill" style="border-color:#c084fc"><b style="color:#c084fc">🩺 ${esc(cat)}</b> · L${m.level} · hop ${m.hops}</span>`;
+    }
+    const cat = m.payload?.category || 'Bulletin';
+    return `<span class="pkt-pill" style="border-color:#38bdf8"><b style="color:#38bdf8">🤝 ${esc(cat)}</b> · L${m.level} · hop ${m.hops}</span>`;
+  });
+
+  return `<div class="pkt-strip">${[...hazardPills, ...communityPills].join('')}</div>`;
 }
 
 function render() {
@@ -557,11 +594,12 @@ function render() {
   $('notifs').innerHTML = notifs.length ? notifs.map(({ t, msg }, i) => {
     const time = t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     if (msg.type === 'CHECKIN') {
+      const routeText = msg.hops > 0 ? `Relayed (${msg.hops} hop${msg.hops === 1 ? '' : 's'})` : 'Family check-in';
       return `
         <div class="notif${i === 0 ? ' flash' : ''}" style="border-color:#86efac">
           <div class="notif-top">
             <b style="color:#86efac">💚 ${esc(msg.payload.name)} is OK</b>
-            <span class="hop-badge">Family check-in</span>
+            <span class="hop-badge">${routeText}</span>
           </div>
           <div>Checked in safe from Level ${msg.level}.</div>
           <div class="notif-meta">
@@ -572,11 +610,12 @@ function render() {
         </div>`;
     }
     if (msg.type === 'REPORT') {
+      const routeText = msg.hops > 0 ? `Relayed (${msg.hops} hop${msg.hops === 1 ? '' : 's'})` : 'Symptom / Supply Report';
       return `
         <div class="notif${i === 0 ? ' flash' : ''}" style="border-color:#c084fc">
           <div class="notif-top">
             <b style="color:#c084fc">🩺 ${esc(msg.payload.title)}</b>
-            <span class="hop-badge">Symptom / Supply Report</span>
+            <span class="hop-badge">${routeText}</span>
           </div>
           <div>${esc(msg.payload.note)}</div>
           <div class="notif-meta">
@@ -589,11 +628,12 @@ function render() {
         </div>`;
     }
     if (msg.type === 'BULLETIN') {
+      const routeText = msg.hops > 0 ? `Relayed (${msg.hops} hop${msg.hops === 1 ? '' : 's'})` : 'Resource Board';
       return `
         <div class="notif${i === 0 ? ' flash' : ''}" style="border-color:#38bdf8">
           <div class="notif-top">
             <b style="color:#38bdf8">🤝 ${esc(msg.payload.title)}</b>
-            <span class="hop-badge">Resource Board</span>
+            <span class="hop-badge">${routeText}</span>
           </div>
           <div>${esc(msg.payload.note)}</div>
           <div class="notif-meta">
