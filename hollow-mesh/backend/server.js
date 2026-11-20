@@ -211,12 +211,18 @@ setInterval(() => {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log('\nHollow mesh relay is running.\n');
-  console.log('  Big screen (laptop):  http://localhost:' + PORT + '/board.html');
-  console.log('  Simulator:            http://localhost:' + PORT + '/index.html');
+  console.log('  Local URLs (this computer):');
+  console.log(`    http://localhost:${PORT}/ble.html         -> Bluetooth courier (real ESP32 proximity demo; Chrome/Edge)`);
+  console.log(`    http://localhost:${PORT}/ble.html?mock=1  -> Bluetooth courier practice mode (simulated boards)`);
+  console.log(`    http://localhost:${PORT}/board.html       -> Big-screen live board (devices, levels, and hops)`);
+  console.log(`    http://localhost:${PORT}/index.html       -> 2D Hollow simulator (virtual crowd & sensor demo)`);
   const urls = lanUrls();
   if (urls.length) {
-    console.log('\n  Open this on each phone (same Wi-Fi as this computer):');
-    for (const u of urls) console.log('    ' + u + '/phone.html');
+    console.log('\n  LAN URLs (other devices on the same Wi-Fi / hotspot):');
+    for (const u of urls) {
+      console.log(`    ${u}/ble.html    -> Bluetooth courier (needs Chrome insecure-origin flag or HTTPS)`);
+      console.log(`    ${u}/phone.html  -> Wi-Fi/WebRTC phone demo (simulated levels, no Bluetooth)`);
+    }
   } else {
     console.log('\n  No network address found. Connect this computer to Wi-Fi or a phone hotspot.');
   }

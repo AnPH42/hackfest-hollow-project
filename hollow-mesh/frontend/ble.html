@@ -2,67 +2,449 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Hollow Mesh — Bluetooth Courier</title>
   <style>
-    :root { --bg:#0a0d13; --panel:#121722; --panel2:#1a2130; --line:#232b3b; --text:#e8ebf2;
-      --muted:#8a93a8; --accent:#ffb020; --ok:#4ade80; --bad:#f87171; }
+    :root {
+      --bg: #090c12;
+      --panel: #111622;
+      --panel2: #182030;
+      --panel3: #1e283b;
+      --line: #252f42;
+      --text: #eef1f7;
+      --muted: #8b95ab;
+      --accent: #ffb020;
+      --ok: #4ade80;
+      --bad: #f87171;
+      --info: #38bdf8;
+      --purple: #c084fc;
+    }
     * { box-sizing: border-box; }
-    body { margin: 0; background: var(--bg); color: var(--text); padding: 18px 20px 40px;
-      font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-    main { max-width: 760px; margin: 0 auto; }
-    header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-    h1 { font-size: 19px; margin: 0; } h1 span { color: var(--muted); font-weight: 400; }
-    .muted { color: var(--muted); font-size: 12.5px; }
-    .chip { font-size: 12px; padding: 2px 10px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); color: var(--muted); }
-    .chip.ok b { color: var(--ok); } .chip.bad b { color: var(--bad); } .chip b { color: var(--text); }
-    h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 22px 0 8px; font-weight: 600; }
-    .row { display: flex; gap: 8px; flex-wrap: wrap; }
-    button { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line);
-      border-radius: 10px; padding: 10px 14px; cursor: pointer; }
-    button:hover { border-color: #3a4560; }
-    button.primary { background: var(--accent); color: #1a1100; border-color: var(--accent); font-weight: 600; }
-    .board { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; margin-bottom: 8px; }
-    .bhead { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-    .mock { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); font-size: 13px; }
-    .mock button { padding: 5px 10px; font-size: 13px; }
-    .notif { background: var(--panel2); border-left: 4px solid var(--muted); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; font-size: 14px; }
-    .notif b { display: block; margin-bottom: 2px; }
-    .notif small { display: block; color: var(--muted); margin-top: 4px; font-size: 11.5px; }
-    .empty { color: var(--muted); text-align: center; padding: 20px 10px; border: 1px dashed var(--line); border-radius: 10px; font-size: 13.5px; }
-    .logline { font-size: 12.5px; padding: 2px 0; font-variant-numeric: tabular-nums; }
-    .logline span { color: var(--muted); margin-right: 6px; }
-    .flash { animation: flash .9s ease-out; }
-    @keyframes flash { from { background: #3a2f12; } to { background: var(--panel2); } }
-    ol { color: var(--muted); font-size: 13.5px; padding-left: 20px; margin: 6px 0 0; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      padding: 18px 20px 48px;
+      font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    main { max-width: 860px; margin: 0 auto; }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px 16px;
+      margin-bottom: 14px;
+    }
+    h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+    h1 span { color: var(--muted); font-weight: 400; }
+
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .chip {
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .chip b { color: var(--text); }
+    .chip.ok { border-color: rgba(74, 222, 128, 0.35); }
+    .chip.ok b { color: var(--ok); }
+    .chip.bad { border-color: rgba(248, 113, 113, 0.35); }
+    .chip.bad b { color: var(--bad); }
+    .chip.info { border-color: rgba(56, 189, 248, 0.35); }
+    .chip.info b { color: var(--info); }
+
+    button {
+      font: inherit;
+      font-size: 14px;
+      color: var(--text);
+      background: var(--panel2);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 9px 14px;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s, transform 0.08s;
+    }
+    button:hover { border-color: #41506e; background: var(--panel3); }
+    button:active { transform: scale(0.98); }
+    button.primary {
+      background: var(--accent);
+      color: #1a1100;
+      border-color: var(--accent);
+      font-weight: 600;
+    }
+    button.primary:hover { background: #ffbd42; border-color: #ffbd42; }
+    button.checkin-btn {
+      background: rgba(74, 222, 128, 0.14);
+      border-color: rgba(74, 222, 128, 0.45);
+      color: #bbf7d0;
+      font-weight: 600;
+    }
+    button.checkin-btn:hover { background: rgba(74, 222, 128, 0.22); }
+    button.report-btn {
+      background: rgba(192, 132, 252, 0.14);
+      border-color: rgba(192, 132, 252, 0.45);
+      color: #e9d5ff;
+      font-weight: 600;
+    }
+    button.report-btn:hover { background: rgba(192, 132, 252, 0.22); }
+    button.bulletin-btn {
+      background: rgba(56, 189, 248, 0.14);
+      border-color: rgba(56, 189, 248, 0.45);
+      color: #bae6fd;
+      font-weight: 600;
+    }
+    button.bulletin-btn:hover { background: rgba(56, 189, 248, 0.22); }
+    button.subtle { font-size: 13px; padding: 7px 12px; color: var(--muted); }
+    button.subtle:hover { color: var(--text); }
+
+    input[type="text"], select {
+      font: inherit;
+      font-size: 14px;
+      color: var(--text);
+      background: var(--panel2);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 11px;
+    }
+
+    .banner {
+      margin-top: 12px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      background: rgba(248, 113, 113, 0.1);
+      border: 1px solid rgba(248, 113, 113, 0.4);
+      color: #fecaca;
+      font-size: 13.5px;
+      display: none;
+    }
+
+    h2 {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin: 22px 0 10px;
+      font-weight: 600;
+    }
+
+    /* 4-stage live relay pipeline */
+    .pipeline {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 16px;
+    }
+    @media (max-width: 700px) {
+      .pipeline { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    .stage-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+      transition: border-color 0.25s, background 0.25s, box-shadow 0.25s;
+    }
+    .stage-card.active {
+      border-color: var(--ok);
+      background: rgba(74, 222, 128, 0.07);
+      box-shadow: 0 0 0 1px rgba(74, 222, 128, 0.2);
+    }
+    .stage-card.carrying {
+      border-color: var(--accent);
+      background: rgba(255, 176, 32, 0.08);
+    }
+    .stage-num {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin-bottom: 2px;
+    }
+    .stage-title { font-weight: 600; font-size: 14px; }
+    .stage-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+    .stage-card.active .stage-sub { color: var(--ok); }
+    .stage-card.carrying .stage-sub { color: var(--accent); }
+
+    /* Check-in & community forms */
+    .checkin-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 14px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    @media (max-width: 700px) {
+      .two-col { grid-template-columns: 1fr; }
+    }
+    .form-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .form-card h3 {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .form-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .form-row select { flex: 1 1 130px; }
+    .form-card input[type="text"] { width: 100%; }
+    .checkin-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+
+    /* Boards */
+    .board {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+      transition: border-color 0.2s;
+    }
+    .board.is-connected { border-color: rgba(74, 222, 128, 0.45); }
+    .bhead { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .btitle { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .role-tag {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: var(--panel2);
+      color: var(--muted);
+      border: 1px solid var(--line);
+    }
+    .pkt-strip {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--line);
+      align-items: center;
+    }
+    .pkt-pill {
+      font-size: 12px;
+      padding: 3px 9px;
+      border-radius: 8px;
+      background: var(--panel2);
+      border: 1px solid var(--line);
+      font-variant-numeric: tabular-nums;
+    }
+    .mock {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px dashed var(--line);
+      font-size: 13px;
+    }
+    .mock button { padding: 5px 10px; font-size: 12.5px; border-radius: 8px; }
+    .mock label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; margin-right: 6px; }
+    .mock input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
+
+    /* Notifications */
+    .notif {
+      background: var(--panel2);
+      border-left: 5px solid var(--muted);
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+      font-size: 14.5px;
+    }
+    .notif-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 4px;
+    }
+    .notif-top b { font-size: 16px; }
+    .notif-meta {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .hop-badge {
+      padding: 1px 8px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text);
+      font-weight: 500;
+    }
+
+    .empty {
+      color: var(--muted);
+      text-align: center;
+      padding: 20px 12px;
+      border: 1px dashed var(--line);
+      border-radius: 12px;
+      font-size: 13.5px;
+    }
+
+    .log-box {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 14px;
+    }
+    .logline {
+      font-size: 12.5px;
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(37, 47, 66, 0.5);
+      font-variant-numeric: tabular-nums;
+      display: flex;
+      gap: 10px;
+    }
+    .logline:last-child { border-bottom: 0; }
+    .logline span { color: var(--muted); flex-shrink: 0; }
+    .logline.pickup { color: var(--accent); }
+    .logline.dropoff { color: var(--ok); }
+
+    .flash { animation: flash 1s ease-out; }
+    @keyframes flash {
+      from { background: #3b2e10; }
+      to { background: var(--panel2); }
+    }
+
+    details.guide {
+      margin-top: 12px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    details.guide summary { cursor: pointer; color: var(--text); font-weight: 500; }
+    details.guide ol { margin: 8px 0 2px; padding-left: 20px; }
   </style>
 </head>
 <body>
 <main>
   <header>
     <h1>Hollow Mesh <span>· Bluetooth courier</span></h1>
-    <div class="row"><span class="chip" id="me"></span><span class="chip" id="carry">Carrying <b>0</b></span></div>
+    <div class="row">
+      <span class="chip info"><b>Offline BLE</b> · no server</span>
+      <span class="chip" id="me"></span>
+      <span class="chip" id="carry">Carrying <b>0</b></span>
+    </div>
   </header>
 
   <div class="row">
     <button class="primary" id="pairBtn">Pair a board</button>
     <button id="practiceBtn">Practice with simulated boards</button>
     <button id="switchBtn" style="display:none">Become a different laptop</button>
+    <button class="subtle" id="resetViewBtn">Reset view (keep pairing)</button>
   </div>
-  <ol>
-    <li>Chrome or Edge, opened from <b>http://localhost</b> (not a network address).</li>
-    <li>Stand near a board, press “Pair a board”, choose its name (starts with “Hollow-”). Do this once for the sensor board and once for the mailbox board.</li>
-    <li>After that this page reconnects by itself whenever you walk back into range. Don’t reload it.</li>
-  </ol>
 
-  <h2>Boards</h2>
+  <div class="banner" id="compatBanner"></div>
+
+  <details class="guide">
+    <summary>How the proximity demo works</summary>
+    <ol>
+      <li>Open this page in <b>Chrome</b> or <b>Edge</b> from <b>http://localhost</b> (desktop or Android).</li>
+      <li>Near the sensor ESP32, click <b>Pair a board</b> and select <b>Hollow-Sensor</b>. Near the receiver ESP32, pair <b>Hollow-Mailbox</b>.</li>
+      <li>Walk near <b>Hollow-Sensor</b> to pick up an alert, walk out of range over to <b>Hollow-Mailbox</b> to drop it off, then let a second device read it from the mailbox. Don’t reload this tab.</li>
+    </ol>
+  </details>
+
+  <div class="pipeline" id="pipeline"></div>
+
+  <h2>Family check-in</h2>
+  <div class="checkin-card">
+    <div class="row">
+      <input type="text" id="checkinName" placeholder="Your name (optional)" maxlength="24" />
+      <select id="checkinLevel">
+        <option value="4">Level 4</option>
+        <option value="7">Level 7</option>
+        <option value="9">Level 9</option>
+        <option value="12" selected>Level 12</option>
+      </select>
+    </div>
+    <button class="checkin-btn" id="checkinBtn">💚 Send "I'm OK" check-in</button>
+  </div>
+
+  <h2>Community health &amp; resource sharing</h2>
+  <div class="two-col">
+    <div class="form-card">
+      <h3>🩺 Symptom &amp; clinic report</h3>
+      <div class="form-row">
+        <select id="reportKind">
+          <option value="Lung sickness">Lung / breathing sickness</option>
+          <option value="Sleep / mood strain">Underground sleep / mood strain</option>
+          <option value="Medicine shortage">Medicine / clinic shortage</option>
+        </select>
+        <select id="reportLevel">
+          <option value="4">Level 4</option>
+          <option value="7">Level 7</option>
+          <option value="9">Level 9</option>
+          <option value="12" selected>Level 12</option>
+        </select>
+      </div>
+      <input type="text" id="reportNote" placeholder="Details (e.g. 4 cases near Shaft C, need inhalers)" maxlength="90" />
+      <button class="report-btn" id="reportBtn">Log symptom / supply report</button>
+    </div>
+
+    <div class="form-card">
+      <h3>🤝 Neighborhood resource board</h3>
+      <div class="form-row">
+        <select id="bulletinKind">
+          <option value="Sharing food / water">Sharing food / water</option>
+          <option value="Sharing backup power">Sharing backup power</option>
+          <option value="Sharing shelter space">Sharing shelter space</option>
+          <option value="Need supplies">Need supplies</option>
+        </select>
+        <select id="bulletinLevel">
+          <option value="4">Level 4</option>
+          <option value="7">Level 7</option>
+          <option value="9">Level 9</option>
+          <option value="12" selected>Level 12</option>
+        </select>
+      </div>
+      <input type="text" id="bulletinNote" placeholder="Details (e.g. Clean water &amp; charging at Bay 4)" maxlength="90" />
+      <button class="bulletin-btn" id="bulletinBtn">Post to resource board</button>
+    </div>
+  </div>
+  <div class="checkin-note">Check-ins, reports, and resource bulletins use <code>MeshNode</code> and stream to <code>board.html</code> (note: physical ESP32 mailboxes currently filter BLE packets to hazard kinds 1–7).</div>
+
+  <h2>Paired boards</h2>
   <div id="boards"></div>
 
-  <h2>Alerts this laptop has received</h2>
+  <h2>Alerts, reports &amp; resource board</h2>
   <div id="notifs"></div>
 
-  <h2>Activity</h2>
-  <div id="log"></div>
+  <h2>Real-time transfer log</h2>
+  <div class="log-box" id="log"></div>
 </main>
 <script type="module" src="./ble.js"></script>
 </body>
