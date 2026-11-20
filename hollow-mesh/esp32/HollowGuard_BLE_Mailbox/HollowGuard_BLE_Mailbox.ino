@@ -2,6 +2,7 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
+#include <Preferences.h>
 
 #define SERVICE_UUID "7e3b0001-6a21-4d5b-9c47-5b1d1a4e0000"
 #define FEED_UUID    "7e3b0001-6a21-4d5b-9c47-5b1d1a4e0001"
@@ -21,10 +22,76 @@ static_assert(sizeof(HollowPacket) == 10, "Packet must be 10 bytes");
 
 HollowPacket stored[4];
 int storedCount = 0;
+const unsigned long ALERT_LIFETIME = 10UL * 60UL * 1000UL;
+unsigned long alertReceivedAt[4] = {0};
+
+Preferences preferences;
+
+void saveAlerts() {
+  if (storedCount == 0) {
+    preferences.remove("alerts");
+  } else {
+    preferences.putBytes(
+      "alerts",
+      stored,
+      storedCount * sizeof(HollowPacket)
+    );
+  }
+}
+
+  void loadAlerts() {
+  size_t bytes = preferences.getBytesLength("alerts");
+
+  // Only load complete packets, up to our 4-packet limit
+  if (bytes == 0 ||
+      bytes > sizeof(stored) ||
+      bytes % sizeof(HollowPacket) != 0) {
+    storedCount = 0;
+    return;
+  }
+
+  storedCount = bytes / sizeof(HollowPacket);
+
+  preferences.getBytes("alerts", stored, bytes);
+  for (int i = 0; i < storedCount; i++) {
+  alertReceivedAt[i] = millis();
+}
+
+  Serial.print("Restored alerts: ");
+  Serial.println(storedCount);
+}
+void updateFeed();
+void removeExpiredAlerts() {
+  int writeIndex = 0;
+  bool changed = false;
+
+  for (int i = 0; i < storedCount; i++) {
+    if (millis() - alertReceivedAt[i] >= ALERT_LIFETIME) {
+      changed = true;
+      continue;
+    }
+
+    stored[writeIndex] = stored[i];
+    alertReceivedAt[writeIndex] = alertReceivedAt[i];
+    writeIndex++;
+  }
+
+  if (changed) {
+    storedCount = writeIndex;
+    saveAlerts();
+    updateFeed();
+    Serial.println("Expired alerts removed");
+  }
+}
 
 BLECharacteristic* feedCharacteristic;
 
 void updateFeed() {
+  if (storedCount == 0) {
+    feedCharacteristic->setValue((uint8_t*)nullptr, 0);
+    return;
+  }
+
   uint8_t bytes[40];
 
   memcpy(bytes, stored, storedCount * sizeof(HollowPacket));
@@ -61,14 +128,18 @@ Serial.println(packet.id);
     }
 
     if (storedCount == 4) {
-      for (int i = 1; i < 4; i++) {
-        stored[i - 1] = stored[i];
-      }
-      storedCount = 3;
-    }
+  for (int i = 1; i < 4; i++) {
+    stored[i - 1] = stored[i];
+    alertReceivedAt[i - 1] = alertReceivedAt[i];
+  }
+  storedCount = 3;
+}
 
-    stored[storedCount++] = packet;
+stored[storedCount] = packet;
+alertReceivedAt[storedCount] = millis();
+storedCount++;
 
+saveAlerts();
     updateFeed();
 
     feedCharacteristic->setValue(
@@ -94,8 +165,13 @@ class ServerCallbacks : public BLEServerCallbacks {
   }
 };
 
-void setup() {
+  void setup() {
   Serial.begin(115200);
+
+  preferences.begin("hollow", false);
+  loadAlerts();
+
+  BLEDevice::init("Hollow-Mailbox");
 
   BLEDevice::init("Hollow-Mailbox");
 
@@ -130,5 +206,6 @@ void setup() {
 }
 
 void loop() {
-  delay(100);
+  removeExpiredAlerts();
+  delay(1000);
 }
