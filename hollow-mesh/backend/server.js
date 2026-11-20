@@ -190,7 +190,7 @@ const server = http.createServer(async (req, res) => {
     if (rel === '/') rel = '/index.html';
     // /shared/... comes from the shared folder; everything else comes from the frontend folder
     const [base, sub] = rel.startsWith('/shared/') ? [SHARED, rel.slice('/shared'.length)] : [FRONTEND, rel];
-    const file = path.normalize(path.join(base, sub));
+    const file = path.resolve(base, sub.replace(/^\/+/, ''));
     if (!file.startsWith(base + path.sep) || !MIME[path.extname(file)]) { res.writeHead(404).end('not found'); return; }
     fs.readFile(file, (err, data) => {
       if (err) { res.writeHead(404).end('not found'); return; }

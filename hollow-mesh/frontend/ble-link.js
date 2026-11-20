@@ -21,7 +21,15 @@ export const INBOX_UUID   = '7e3b0001-6a21-4d5b-9c47-5b1d1a4e0002'; // write: dr
 export const NAME_PREFIX  = 'Hollow-';
 
 export const PACKET_LEN = 10;
-export const KIND_CODE = { POWER: 1, AIR: 2, WATER: 3, FLOOD: 4, HEAT: 5 };
+export const KIND_CODE = {
+  POWER: 1,
+  AIR: 2,
+  WATER: 3,
+  FLOOD: 4,
+  HEAT: 5,
+  EARTHQUAKE: 6,
+  VIBRATION: 7
+};
 export const KIND_NAME = Object.fromEntries(Object.entries(KIND_CODE).map(([k, v]) => [v, k]));
 
 /**

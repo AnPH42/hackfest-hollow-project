@@ -79,6 +79,7 @@ async function pushTo(board) {
   board.pushing = true;
   try {
     for (const m of [...node.store.values()]) {
+      if (board.name === 'Hollow-Sensor') continue;
       const pk = packetFromMessage(m);
       if (!pk || m.ttl <= 0) continue;
       if (board.known.has(packetKey(pk))) continue;         // the board already has it

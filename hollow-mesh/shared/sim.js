@@ -72,6 +72,30 @@ export const SENSOR_DEFS = {
     advice: 'Temperatures are above safe limits. Drink water, avoid exertion, and move up a level if you can.',
     official: 'Cooling systems are operating within normal parameters.',
   },
+  EARTHQUAKE: {
+    button: 'Earthquake — Level 12',
+    short: 'Quake', glyph: 'E', level: 3, x: 720,
+    label: 'Earthquake vibration', unit: 'units',
+    location: 'Level 12',
+    baseline: 0, fault: 12000, threshold: 10000,
+    dir: 'above', color: '#f97316',
+    title: 'Earthquake detected — Level 12',
+    advice: 'Strong shaking detected. Drop, cover, and hold on. Stay away from windows and unstable structures.',
+    official: 'No earthquake activity has been reported.',
+  },
+
+  VIBRATION: {
+    button: 'Vibration — Level 12',
+    short: 'Vibration', glyph: 'V', level: 3, x: 780,
+    label: 'Vibration intensity', unit: 'units',
+    location: 'Level 12',
+    baseline: 0, fault: 5000, threshold: 4000,
+    dir: 'above', color: '#facc15',
+    title: 'Unusual vibration detected — Level 12',
+    advice: 'Unusual shaking has been detected. Stay alert and avoid unstable structures.',
+    official: 'No unusual vibration activity has been reported.',
+  },
+
 };
 
 const NAMES = ['Maya', 'Idris', 'Lena', 'Tomas', 'Anya', 'Kofi', 'Rae', 'Sami',
