@@ -212,6 +212,66 @@ async function pushTo(board) {
 
 const syncAll = () => boards.forEach((b) => pushTo(b));
 
+// Community BLE messages use a separate characteristic from emergency alerts.
+// Queue messages in MeshNode and retry whenever a mailbox reconnects.
+const COMMUNITY_TYPES = new Set(['CHECKIN', 'REPORT', 'BULLETIN']);
+
+function communityWireMessage(m) {
+  // Send the fields the MeshNode needs; omit null/default fields to fit 512 bytes.
+  return {
+    id: m.id, type: m.type, sender: m.sender,
+    to: m.to ?? null, level: m.level,
+    payload: m.payload, timestamp: m.timestamp,
+    expiresAt: m.expiresAt, ttl: m.ttl, hops: m.hops, sig: null
+  };
+}
+
+async function receiveCommunityMessages(board) {
+  if (board.role !== 'mailbox' || typeof board.link.readCommunity !== 'function') return;
+  try {
+    const messages = await board.link.readCommunity();
+    let fresh = 0;
+    for (const msg of messages) {
+      if (!msg || !COMMUNITY_TYPES.has(msg.type) || !msg.id) continue;
+      if (node.receive(msg)) {
+        fresh++;
+        reportBoardHop(board.name, nodeId, zoneForLevel(msg.level), msg);
+      }
+      board.communityKnown.add(msg.id);
+    }
+    if (fresh) log(`Picked up ${fresh} community message(s) from ${board.name}`, 'pickup');
+  } catch (error) {
+    log(`Community retrieval failed: ${error.message}`);
+  }
+}
+
+async function pushCommunity(board) {
+  if (!board.connected || board.role !== 'mailbox' || board.communityPushing) return;
+  if (typeof board.link.writeCommunity !== 'function') return;
+  board.communityPushing = true;
+  try {
+    for (const m of [...node.store.values()]) {
+      if (!COMMUNITY_TYPES.has(m.type) || m.ttl <= 0) continue;
+      if (board.communityKnown.has(m.id)) continue;
+      const outbound = communityWireMessage({ ...m, ttl: m.ttl - 1, hops: m.hops + 1 });
+      await board.link.writeCommunity(outbound);
+      board.communityKnown.add(m.id);
+      log(`Sent ${m.type} to ${board.name}`, 'dropoff');
+    }
+  } catch (error) {
+    log(`Community send failed: ${error.message}`);
+  } finally {
+    board.communityPushing = false;
+  }
+}
+
+function sendCommunityMessage(msg) {
+  // The message is already in node.store. Connected mailboxes get it now;
+  // disconnected mailboxes get it on their next successful connection.
+  for (const board of boards) {
+    if (board.connected && board.role === 'mailbox') void pushCommunity(board);
+  }
+}
 // ------------------------------------------------------ connection manager
 
 async function connectBoard(b) {
@@ -222,6 +282,7 @@ async function connectBoard(b) {
     await b.link.connect();
     b.connected = true;
     b.known = new Set();
+    b.communityKnown = new Set();
     b.packets = [];
     if (b.role === 'sensor') moveBoardZone(3);
     else moveBoardZone(0);
@@ -238,7 +299,9 @@ async function connectBoard(b) {
       const p = decodePacket(bytes);
       if (p && ingest(p, b)) syncAll();
     });
+    await receiveCommunityMessages(b);
     await pushTo(b);
+    await pushCommunity(b);
     syncAll();
   } catch {
     b.connected = false;
@@ -259,6 +322,8 @@ function addBoard(link, mock = false) {
     connected: false,
     connecting: false,
     pushing: false,
+    communityPushing: false,
+    communityKnown: new Set(),
     known: new Set(),
     packets: [],
     mock,
@@ -301,6 +366,7 @@ function sendCheckin() {
   moveBoardZone(z);
   reportBoardHop(name, nodeId, z, msg);
   log(`Check-in sent: ${name} is OK (Level ${level})`, 'dropoff');
+  sendCommunityMessage(msg);
 }
 
 function sendReport() {
@@ -320,6 +386,7 @@ function sendReport() {
   moveBoardZone(z);
   reportBoardHop(nodeId, `Level ${level}`, z, msg);
   log(`Symptom/supply report logged: ${title}`, 'pickup');
+  sendCommunityMessage(msg);
 }
 
 function sendBulletin() {
@@ -339,6 +406,7 @@ function sendBulletin() {
   moveBoardZone(z);
   reportBoardHop(nodeId, `Level ${level}`, z, msg);
   log(`Resource bulletin posted: ${title}`, 'dropoff');
+  sendCommunityMessage(msg);
 }
 
 // ------------------------------------------------------------ practice & reset
@@ -358,6 +426,7 @@ function resetView() {
   droppedCount = 0;
   for (const b of boards) {
     b.known = new Set();
+    b.communityKnown = new Set();
     b.packets = [];
   }
   log('View reset (paired boards kept). Ready for next demo run.');
@@ -372,6 +441,7 @@ function switchLaptop() {
   telemetryOnline = false;
   for (const b of boards) {
     b.known = new Set();
+    b.communityKnown = new Set();
     b.packets = [];
     b.link.disconnect();
     b.connected = false;

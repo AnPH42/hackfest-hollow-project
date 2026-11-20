@@ -6,6 +6,8 @@
 
 #define SERVICE_UUID "7e3b0001-6a21-4d5b-9c47-5b1d1a4e0000"
 #define FEED_UUID    "7e3b0001-6a21-4d5b-9c47-5b1d1a4e0001"
+#define COMMUNITY_FEED_UUID  "7e3b0001-6a21-4d5b-9c47-5b1d1a4e0003"
+#define COMMUNITY_INBOX_UUID "7e3b0001-6a21-4d5b-9c47-5b1d1a4e0004"
 #define INBOX_UUID   "7e3b0001-6a21-4d5b-9c47-5b1d1a4e0002"
 
 struct __attribute__((packed)) HollowPacket {
@@ -159,9 +161,16 @@ saveAlerts();
 };
 
 class ServerCallbacks : public BLEServerCallbacks {
-  void onDisconnect(BLEServer* server) override {
+  void onConnect(BLEServer* server) override {
+    Serial.println("Courier connected!");
+
+    // Continue advertising for other couriers
     BLEDevice::startAdvertising();
-    Serial.println("Advertising restarted");
+  }
+
+  void onDisconnect(BLEServer* server) override {
+    Serial.println("Courier disconnected!");
+    BLEDevice::startAdvertising();
   }
 };
 
@@ -170,8 +179,6 @@ class ServerCallbacks : public BLEServerCallbacks {
 
   preferences.begin("hollow", false);
   loadAlerts();
-
-  BLEDevice::init("Hollow-Mailbox");
 
   BLEDevice::init("Hollow-Mailbox");
 
