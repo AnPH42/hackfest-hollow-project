@@ -264,10 +264,19 @@ void processLine(String line) {
 
 // ---------------- BLE SERVER ----------------
 
-class SensorBLECallbacks : public BLEServerCallbacks {
-  void onDisconnect(BLEServer* server) override {
+class ServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer* server) override {
+    Serial.println("Courier connected to sensor!");
+
+    // Continue advertising after a connection
     BLEDevice::startAdvertising();
-    Serial.println("BLE advertising restarted");
+  }
+
+  void onDisconnect(BLEServer* server) override {
+    Serial.println("Courier disconnected from sensor!");
+
+    // Resume advertising
+    BLEDevice::startAdvertising();
   }
 };
 
@@ -275,7 +284,7 @@ void setupBLE() {
   BLEDevice::init("Hollow-Sensor");
 
   BLEServer* server = BLEDevice::createServer();
-  server->setCallbacks(new SensorBLECallbacks());
+  server->setCallbacks(new ServerCallbacks());
 
   BLEService* service = server->createService(
     BLE_SERVICE_UUID
