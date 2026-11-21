@@ -158,11 +158,81 @@ export class WebBluetoothBoard {
 
     this.communityFeed = null;
     this.communityInbox = null;
+    this._gattTail = Promise.resolve();
+    this._communityPending = null;
+    this._communityReady = false;
+    this._communityListenerAttached = false;
+    this._communityToken = 1 + Math.floor(Math.random() * 65535);
 
     device.addEventListener(
       'gattserverdisconnected',
-      () => this.onDisconnect?.()
+      () => {
+        this._communityReady = false;
+        if (this._communityPending) {
+          const pending = this._communityPending;
+          this._communityPending = null;
+          clearTimeout(pending.timer);
+          pending.reject(new Error('Bluetooth disconnected'));
+        }
+        this.onDisconnect?.();
+      }
     );
+  }
+
+  // One queue for every GATT operation on this browser connection.
+  _queued(fn) {
+    const next = this._gattTail.catch(() => {}).then(fn);
+    this._gattTail = next.catch(() => {});
+    return next;
+  }
+
+  async _enableCommunityNotifications() {
+    if (!this.communityFeed || this._communityReady) return;
+    if (!this._communityListenerAttached) this.communityFeed.addEventListener('characteristicvaluechanged', (event) => {
+      const dv = event.target.value;
+      const bytes = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength).slice();
+      const pending = this._communityPending;
+      if (!pending || bytes.length < 3) return;
+      if (bytes[1] !== (this._communityToken & 255) ||
+          bytes[2] !== (this._communityToken >> 8)) return;
+      if (!pending.matches(bytes)) return;
+      this._communityPending = null;
+      clearTimeout(pending.timer);
+      pending.resolve(bytes);
+    });
+    this._communityListenerAttached = true;
+    await this.communityFeed.startNotifications();
+    this._communityReady = true;
+  }
+
+  async _requestCommunity(command, matches, timeoutMs = 5000) {
+    if (!this._communityReady) throw new Error('Community notifications unavailable');
+    if (this._communityPending) throw new Error('Community request already pending');
+    let pending;
+    const response = new Promise((resolve, reject) => {
+      pending = { resolve, reject, matches, timer: null };
+      pending.timer = setTimeout(() => {
+        if (this._communityPending === pending) this._communityPending = null;
+        reject(new Error('Community response timeout'));
+      }, timeoutMs);
+    });
+    this._communityPending = pending;
+    try {
+      const fn = this.communityInbox.writeValueWithResponse ?? this.communityInbox.writeValue;
+      await fn.call(this.communityInbox, command);
+      return await response;
+    } catch (error) {
+      if (this._communityPending === pending) this._communityPending = null;
+      clearTimeout(pending.timer);
+      // Avoid unhandled rejection if the write failed before awaiting response.
+      response.catch(() => {});
+      throw error;
+    }
+  }
+
+  _tokenCommand(command, ...fields) {
+    return new Uint8Array([command, this._communityToken & 255,
+      this._communityToken >> 8, ...fields]);
   }
 
   async connect(timeoutMs = 10000) {
@@ -204,11 +274,12 @@ export class WebBluetoothBoard {
       this.communityFeed = null;
       this.communityInbox = null;
     }
+    if (this.communityFeed) await this._enableCommunityNotifications();
   }
 
   // Read emergency alerts
   async readAll() {
-    const dv = await this.feed.readValue();
+    const dv = await this._queued(() => this.feed.readValue());
 
     return splitPackets(
       new Uint8Array(
@@ -221,7 +292,7 @@ export class WebBluetoothBoard {
 
   // Subscribe to emergency alerts
   async subscribe(cb) {
-    await this.feed.startNotifications();
+    await this._queued(() => this.feed.startNotifications());
 
     this.feed.addEventListener(
       'characteristicvaluechanged',
@@ -249,7 +320,7 @@ export class WebBluetoothBoard {
       this.inbox.writeValueWithResponse ??
       this.inbox.writeValue;
 
-    await fn.call(this.inbox, bytes);
+    await this._queued(() => fn.call(this.inbox, bytes));
   }
 
   // ----------------------------------------------------------
@@ -257,169 +328,81 @@ export class WebBluetoothBoard {
   // ----------------------------------------------------------
 
   async writeCommunity(message) {
-    if (!this.communityInbox) {
-      throw new Error('Community Inbox not available');
-    }
-
-    const bytes = new TextEncoder().encode(
-      JSON.stringify(message)
-    );
-
-    if (bytes.length === 0 || bytes.length > 512) {
-      throw new Error('Community message exceeds 512 bytes');
-    }
-
-    const write = async (data) => {
-      const fn =
-        this.communityInbox.writeValueWithResponse ??
-        this.communityInbox.writeValue;
-
-      await fn.call(this.communityInbox, data);
-    };
-
-    // Start transfer
-    await write(new Uint8Array([
-      0x53,
-      bytes.length & 0xff,
-      (bytes.length >> 8) & 0xff
-    ]));
-
-    let sequence = 0;
-
-    // Send 18 bytes per chunk
-    for (let i = 0; i < bytes.length; i += 18) {
-      const chunk = bytes.slice(i, i + 18);
-      const packet = new Uint8Array(chunk.length + 2);
-
-      packet[0] = 0x44;
-      packet[1] = sequence++;
-      packet.set(chunk, 2);
-
-      await write(packet);
-    }
-
-    // End transfer
-    await write(new Uint8Array([0x45]));
+    return this._queued(async () => {
+      if (!this.communityInbox || !this._communityReady) throw new Error('Community Inbox unavailable');
+      const bytes = new TextEncoder().encode(JSON.stringify(message));
+      if (!bytes.length || bytes.length > 512) throw new Error('Community message exceeds 512 bytes');
+      const ack = (b) => b[0] === 0x41 && b.length === 4;
+      let accepted = false;
+      for (let attempt = 0; attempt < 30; attempt++) {
+        const result = await this._requestCommunity(
+          this._tokenCommand(0x53, bytes.length & 255, bytes.length >> 8), ack);
+        if (result[3] === 1) { accepted = true; break; }
+        if (result[3] !== 2) throw new Error('Mailbox rejected upload start');
+        await new Promise((resolve) => setTimeout(resolve, 350 + Math.random() * 250));
+      }
+      if (!accepted) throw new Error('Mailbox busy: upload timed out');
+      const fn = this.communityInbox.writeValueWithResponse ?? this.communityInbox.writeValue;
+      let seq = 0;
+      for (let i = 0; i < bytes.length; i += 16) {
+        const chunk = bytes.slice(i, i + 16);
+        await fn.call(this.communityInbox, this._tokenCommand(0x44, seq++, ...chunk));
+      }
+      const result = await this._requestCommunity(this._tokenCommand(0x45), ack);
+      if (result[3] !== 1 && result[3] !== 4) throw new Error('Mailbox did not store community message');
+    });
   }
 
-  // ----------------------------------------------------------
-  // Retrieve stored community messages
-  // ----------------------------------------------------------
-
   async readCommunity() {
-    if (!this.communityFeed || !this.communityInbox) {
-      return [];
-    }
-
-    const write = async (data) => {
-      const fn =
-        this.communityInbox.writeValueWithResponse ??
-        this.communityInbox.writeValue;
-
-      await fn.call(this.communityInbox, data);
-    };
-
-    const read = async () => {
-      const dv = await this.communityFeed.readValue();
-
-      return new Uint8Array(
-        dv.buffer,
-        dv.byteOffset,
-        dv.byteLength
-      ).slice();
-    };
-
-    // Ask mailbox how many messages it holds.
-    await write(new Uint8Array([0x4e])); // N
-
-    const countReply = await read();
-
-    if (
-      countReply.length !== 2 ||
-      countReply[0] !== 0x4e
-    ) {
-      throw new Error('Invalid community count response');
-    }
-
-    const count = Math.min(countReply[1], 4);
-    const messages = [];
-
-    for (let index = 0; index < count; index++) {
-      const chunks = [];
-      let totalChunks = null;
-
-      for (let chunk = 0; chunk < 32; chunk++) {
-        // Request message index and chunk index.
-        await write(new Uint8Array([
-          0x52,
-          index,
-          chunk
-        ]));
-
-        const reply = await read();
-
-        if (
-          reply.length < 4 ||
-          reply[0] !== 0x46 ||
-          reply[1] !== index ||
-          reply[3] !== chunk
-        ) {
-          throw new Error('Invalid community chunk response');
-        }
-
-        if (totalChunks === null) {
-          totalChunks = reply[2];
-
-          if (totalChunks === 0 || totalChunks > 32) {
-            throw new Error('Invalid community chunk count');
-          }
-        }
-
-        if (reply[2] !== totalChunks) {
-          throw new Error('Community message changed during read');
-        }
-
-        chunks.push(reply.slice(4));
-
-        if (chunk + 1 >= totalChunks) {
-          break;
-        }
-      }
-
-      const length = chunks.reduce(
-        (sum, part) => sum + part.length,
-        0
-      );
-
-      const bytes = new Uint8Array(length);
-      let offset = 0;
-
-      for (const part of chunks) {
-        bytes.set(part, offset);
-        offset += part.length;
-      }
-
+    return this._queued(async () => {
+      if (!this.communityInbox || !this._communityReady) return [];
+      this.communityReading = true;
       try {
-        const message = JSON.parse(
-          new TextDecoder().decode(bytes)
-        );
-
-        if (
-          ['CHECKIN', 'REPORT', 'BULLETIN'].includes(
-            message.type
-          )
-        ) {
-          messages.push(message);
+        const countReply = await this._requestCommunity(
+          this._tokenCommand(0x4e), b => b[0] === 0x4e && b.length === 5);
+        const count = Math.min(countReply[3], 4);
+        const version = countReply[4];
+        const messages = [];
+        for (let index = 0; index < count; index++) {
+          const chunks = [];
+          let total = null;
+          for (let chunk = 0; chunk < 40; chunk++) {
+            const reply = await this._requestCommunity(
+              this._tokenCommand(0x52, index, chunk),
+              b => b[0] === 0x46 && b.length >= 7 && b[3] === index && b[5] === chunk);
+            if (reply[6] !== version) throw new Error('Mailbox changed during download; retrying next poll');
+            if (total === null) {
+              total = reply[4];
+              if (!total || total > 40) throw new Error('Invalid community chunk count');
+            }
+            if (reply[4] !== total) throw new Error('Community chunk count changed');
+            chunks.push(reply.slice(7));
+            if (chunk + 1 >= total) break;
+          }
+          const length = chunks.reduce((n, part) => n + part.length, 0);
+          const bytes = new Uint8Array(length);
+          let offset = 0;
+          for (const part of chunks) { bytes.set(part, offset); offset += part.length; }
+          try {
+            const message = JSON.parse(new TextDecoder().decode(bytes));
+            if (['CHECKIN', 'REPORT', 'BULLETIN'].includes(message.type)) messages.push(message);
+          } catch { /* malformed message */ }
         }
-      } catch {
-        // Ignore malformed messages.
+        return messages;
+      } finally {
+        this.communityReading = false;
       }
-    }
-
-    return messages;
+    });
   }
 
   disconnect() {
+    if (this._communityPending) {
+      const pending = this._communityPending;
+      this._communityPending = null;
+      clearTimeout(pending.timer);
+      pending.reject(new Error('Bluetooth disconnected'));
+    }
+    this._communityReady = false;
     try {
       this.device.gatt.disconnect();
     } catch {

@@ -315,16 +315,47 @@ async function connectBoard(b) {
     await pushTo(b);
     await pushCommunity(b);
     syncAll();
-  } catch {
-    b.connected = false;
-    b.link.disconnect();
-  } finally {
+   
+  } catch (error) {
+  log(`Connection/setup failed for ${b.name}: ${error.message}`);
+  b.connected = false;
+  b.link.disconnect();
+}
+  
+  finally {
     b.connecting = false;
     render();
   }
 }
 
 setInterval(() => boards.forEach((b) => { if (!b.connected && !b.connecting) connectBoard(b); }), 1500);
+
+// Automatically check Hollow-Mailbox for new community messages.
+// The BLE link serializes GATT requests; notifications are token-tagged per browser.
+async function pollCommunityMessages() {
+  for (const board of boards) {
+    if (
+      board.connected &&
+      board.role === 'mailbox' &&
+      !board.connecting &&
+      !board.pushing &&
+      !board.communityPushing &&
+      !board.link.communityReading
+    ) {
+      try {
+        await receiveCommunityMessages(board);
+      } catch (error) {
+        console.error('Community polling failed:', error);
+      }
+    }
+  }
+
+  // Schedule the next check only after this one finishes.
+  setTimeout(pollCommunityMessages, 5000);
+}
+
+// Start automatic polling.
+setTimeout(pollCommunityMessages, 5000);
 
 function addBoard(link, mock = false) {
   boards.push({
